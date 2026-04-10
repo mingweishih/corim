@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "corim",
+    "corim_derive",
+]
+resolver = "2"
+
+[workspace.dependencies]
+corim_derive = { path = "corim_derive", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v5"] }
+ciborium = "0.2"

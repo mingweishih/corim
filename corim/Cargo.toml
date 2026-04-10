@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+name = "corim"
+version = "0.1.0"
+edition = "2021"
+description = "Concise Reference Integrity Manifest (CoRIM) — CBOR-based encoding of Endorsements and Reference Values for Remote Attestation (RATS)."
+license = "MIT"
+authors = ["Microsoft"]
+repository = "https://github.com/microsoft/corim"
+keywords = ["corim", "comid", "cbor", "attestation", "rats"]
+categories = ["encoding", "authentication", "cryptography"]
+readme = "../README.md"
+license-file = "../LICENSE"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["cbor-ciborium"]
+cbor-ciborium = ["dep:ciborium"]
+
+[dependencies]
+corim_derive.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+ciborium = { workspace = true, optional = true }

@@ -1,0 +1,18 @@
+# Build artifacts
+/target/
+**/target/
+
+# Cargo lock is checked in for libraries per Rust convention discussion,
+# but some prefer not to. Uncomment if desired:
+# Cargo.lock
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Rust specific
+**/*.rs.bk
