@@ -16,3 +16,12 @@
 
 # Rust specific
 **/*.rs.bk
+
+# Test data / binary artifacts
+*.cbor
+*.cose
+data/
+
+# Internal planning documents (tracked locally, not published)
+PLAN.md
+OPENSOURCE_CHECKLIST.md

@@ -90,11 +90,8 @@ impl Value {
 // The Serialize/Deserialize impls for Value convert to/from the backend's
 // native value type. These are implemented in the backend module.
 
-#[cfg(feature = "cbor-ciborium")]
-mod ciborium_value_serde;
-
-#[cfg(feature = "cbor-ciborium")]
-pub use ciborium_value_serde::*;
+mod minimal_value_serde;
+pub use minimal_value_serde::*;
 
 // ---------------------------------------------------------------------------
 // Tagged<T> — CBOR semantic tag wrapper
@@ -118,3 +115,26 @@ impl<T> Tagged<T> {
 }
 
 // Serialize/Deserialize for Tagged<T> are in the backend-specific module.
+
+// ---------------------------------------------------------------------------
+// Value conversion helpers (for JSON bridge)
+// ---------------------------------------------------------------------------
+
+/// Serialize a Rust type into a `Value` using serde.
+///
+/// This is the first step in JSON encoding: `T → Value → serde_json::Value`.
+pub fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
+    // Use our minimal backend serializer to get a Value
+    let bytes = crate::cbor::encode(value).map_err(|e| e.to_string())?;
+    let val: Value = crate::cbor::decode(&bytes).map_err(|e| e.to_string())?;
+    Ok(val)
+}
+
+/// Deserialize a `Value` back into a Rust type using serde.
+///
+/// This is the last step in JSON decoding: `serde_json::Value → Value → T`.
+pub fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
+    // Encode the Value to CBOR bytes, then decode into T
+    let bytes = crate::cbor::encode(value).map_err(|e| e.to_string())?;
+    crate::cbor::decode(&bytes).map_err(|e| e.to_string())
+}

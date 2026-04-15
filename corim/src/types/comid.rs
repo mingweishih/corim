@@ -3,10 +3,11 @@
 
 //! `concise-mid-tag` (CoMID) type.
 
-use corim_derive::{CborDeserialize, CborSerialize};
+use corim_macros::{CborDeserialize, CborSerialize};
 
 use super::common::{EntityMap, LinkedTagMap, TagIdentity};
 use super::triples::TriplesMap;
+use crate::Validate;
 
 // ---------------------------------------------------------------------------
 // concise-mid-tag  { language: 0, tag-identity: 1, entities: 2,
@@ -35,4 +36,29 @@ pub struct ComidTag {
     /// `triples` (key 4): the measurement triples.
     #[cbor(key = 4)]
     pub triples: TriplesMap,
+}
+
+impl Validate for ComidTag {
+    fn valid(&self) -> Result<(), String> {
+        // Validate triples
+        self.triples
+            .valid()
+            .map_err(|e| format!("triples validation failed: {e}"))?;
+
+        // Validate entities if present
+        if let Some(ref entities) = self.entities {
+            if entities.is_empty() {
+                return Err("entities list must not be empty".into());
+            }
+        }
+
+        // Validate linked-tags if present
+        if let Some(ref linked) = self.linked_tags {
+            if linked.is_empty() {
+                return Err("linked-tags list must not be empty".into());
+            }
+        }
+
+        Ok(())
+    }
 }

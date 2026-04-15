@@ -7,27 +7,35 @@
 
 use std::collections::BTreeMap;
 
-use corim_derive::{CborDeserialize, CborSerialize};
+use corim_macros::{CborDeserialize, CborSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::cbor::value::{self, Value};
 use super::common::{CryptoKey, MeasuredElement, VersionMap};
+use super::tags::*;
+use crate::cbor::value::{self, Value};
+use crate::Validate;
 
 // ---------------------------------------------------------------------------
 // digest = [alg: int, val: bytes]
 // ---------------------------------------------------------------------------
 
 /// `eatmc.digest` — a `[algorithm-id, digest-value]` pair.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Digest(pub i64, #[serde(with = "serde_bytes")] pub Vec<u8>);
 
 impl Digest {
     /// Create a new digest.
-    pub fn new(alg: i64, value: Vec<u8>) -> Self { Self(alg, value) }
+    pub fn new(alg: i64, value: Vec<u8>) -> Self {
+        Self(alg, value)
+    }
     /// Get the algorithm identifier.
-    pub fn alg(&self) -> i64 { self.0 }
+    pub fn alg(&self) -> i64 {
+        self.0
+    }
     /// Get the digest value bytes.
-    pub fn value(&self) -> &[u8] { &self.1 }
+    pub fn value(&self) -> &[u8] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -38,7 +46,8 @@ impl Digest {
 ///
 /// - Untagged `uint` or `#6.552(uint)`: exact SVN.
 /// - `#6.553(uint)`: minimum SVN.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SvnChoice {
     /// Exact SVN value (untagged or tag 552).
     ExactValue(u64),
@@ -49,8 +58,8 @@ pub enum SvnChoice {
 impl Serialize for SvnChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            SvnChoice::ExactValue(v) => value::serialize_tagged(552, v, s),
-            SvnChoice::MinValue(v) => value::serialize_tagged(553, v, s),
+            SvnChoice::ExactValue(v) => value::serialize_tagged(TAG_SVN, v, s),
+            SvnChoice::MinValue(v) => value::serialize_tagged(TAG_MIN_SVN, v, s),
         }
     }
 }
@@ -59,18 +68,30 @@ impl<'de> Deserialize<'de> for SvnChoice {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Tag(552, inner) => {
-                let n = inner.into_integer().ok_or_else(|| serde::de::Error::custom("tag 552 must wrap uint"))?;
-                Ok(SvnChoice::ExactValue(n.try_into().map_err(|_| serde::de::Error::custom("SVN must be unsigned"))?))
+            Value::Tag(TAG_SVN, inner) => {
+                let n = inner
+                    .into_integer()
+                    .ok_or_else(|| serde::de::Error::custom("tag 552 must wrap uint"))?;
+                Ok(SvnChoice::ExactValue(n.try_into().map_err(|_| {
+                    serde::de::Error::custom("SVN must be unsigned")
+                })?))
             }
-            Value::Tag(553, inner) => {
-                let n = inner.into_integer().ok_or_else(|| serde::de::Error::custom("tag 553 must wrap uint"))?;
-                Ok(SvnChoice::MinValue(n.try_into().map_err(|_| serde::de::Error::custom("min-SVN must be unsigned"))?))
+            Value::Tag(TAG_MIN_SVN, inner) => {
+                let n = inner
+                    .into_integer()
+                    .ok_or_else(|| serde::de::Error::custom("tag 553 must wrap uint"))?;
+                Ok(SvnChoice::MinValue(n.try_into().map_err(|_| {
+                    serde::de::Error::custom("min-SVN must be unsigned")
+                })?))
             }
             Value::Integer(i) => {
-                Ok(SvnChoice::ExactValue(i.try_into().map_err(|_| serde::de::Error::custom("SVN must be unsigned"))?))
+                Ok(SvnChoice::ExactValue(i.try_into().map_err(|_| {
+                    serde::de::Error::custom("SVN must be unsigned")
+                })?))
             }
-            _ => Err(serde::de::Error::custom("expected uint, tag 552, or tag 553")),
+            _ => Err(serde::de::Error::custom(
+                "expected uint, tag 552, or tag 553",
+            )),
         }
     }
 }
@@ -84,25 +105,35 @@ impl<'de> Deserialize<'de> for SvnChoice {
 #[cbor(non_empty)]
 pub struct FlagsMap {
     /// `is-configured` (key 0).
-    #[cbor(key = 0, optional)] pub is_configured: Option<bool>,
+    #[cbor(key = 0, optional)]
+    pub is_configured: Option<bool>,
     /// `is-secure` (key 1).
-    #[cbor(key = 1, optional)] pub is_secure: Option<bool>,
+    #[cbor(key = 1, optional)]
+    pub is_secure: Option<bool>,
     /// `is-recovery` (key 2).
-    #[cbor(key = 2, optional)] pub is_recovery: Option<bool>,
+    #[cbor(key = 2, optional)]
+    pub is_recovery: Option<bool>,
     /// `is-debug` (key 3).
-    #[cbor(key = 3, optional)] pub is_debug: Option<bool>,
+    #[cbor(key = 3, optional)]
+    pub is_debug: Option<bool>,
     /// `is-replay-protected` (key 4).
-    #[cbor(key = 4, optional)] pub is_replay_protected: Option<bool>,
+    #[cbor(key = 4, optional)]
+    pub is_replay_protected: Option<bool>,
     /// `is-integrity-protected` (key 5).
-    #[cbor(key = 5, optional)] pub is_integrity_protected: Option<bool>,
+    #[cbor(key = 5, optional)]
+    pub is_integrity_protected: Option<bool>,
     /// `is-runtime-meas` (key 6).
-    #[cbor(key = 6, optional)] pub is_runtime_meas: Option<bool>,
+    #[cbor(key = 6, optional)]
+    pub is_runtime_meas: Option<bool>,
     /// `is-immutable` (key 7).
-    #[cbor(key = 7, optional)] pub is_immutable: Option<bool>,
+    #[cbor(key = 7, optional)]
+    pub is_immutable: Option<bool>,
     /// `is-tcb` (key 8).
-    #[cbor(key = 8, optional)] pub is_tcb: Option<bool>,
+    #[cbor(key = 8, optional)]
+    pub is_tcb: Option<bool>,
     /// `is-confidentiality-protected` (key 9).
-    #[cbor(key = 9, optional)] pub is_confidentiality_protected: Option<bool>,
+    #[cbor(key = 9, optional)]
+    pub is_confidentiality_protected: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +141,8 @@ pub struct FlagsMap {
 // ---------------------------------------------------------------------------
 
 /// `$raw-value-type-choice` — tagged bytes or masked raw value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RawValueChoice {
     /// Plain bytes (CBOR tag 560).
     Bytes(Vec<u8>),
@@ -126,13 +158,13 @@ pub enum RawValueChoice {
 impl Serialize for RawValueChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            RawValueChoice::Bytes(b) => value::serialize_tagged_bytes(560, b, s),
+            RawValueChoice::Bytes(b) => value::serialize_tagged_bytes(TAG_BYTES, b, s),
             RawValueChoice::Masked { value, mask } => {
                 let arr = Value::Array(vec![
                     Value::Bytes(value.clone()),
                     Value::Bytes(mask.clone()),
                 ]);
-                value::serialize_tagged(563, &arr, s)
+                value::serialize_tagged(TAG_MASKED_RAW_VALUE, &arr, s)
             }
         }
     }
@@ -142,11 +174,11 @@ impl<'de> Deserialize<'de> for RawValueChoice {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Tag(560, inner) => match *inner {
+            Value::Tag(TAG_BYTES, inner) => match *inner {
                 Value::Bytes(b) => Ok(RawValueChoice::Bytes(b)),
                 _ => Err(serde::de::Error::custom("tag 560 must wrap bytes")),
             },
-            Value::Tag(563, inner) => match *inner {
+            Value::Tag(TAG_MASKED_RAW_VALUE, inner) => match *inner {
                 Value::Array(mut a) if a.len() == 2 => {
                     let mask = match a.pop().unwrap() {
                         Value::Bytes(b) => b,
@@ -170,7 +202,8 @@ impl<'de> Deserialize<'de> for RawValueChoice {
 // ---------------------------------------------------------------------------
 
 /// `mac-addr-type-choice` — EUI-48 or EUI-64 MAC address.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MacAddr {
     /// EUI-48 (6 bytes).
     Eui48([u8; 6]),
@@ -210,7 +243,8 @@ impl<'de> Deserialize<'de> for MacAddr {
 // ---------------------------------------------------------------------------
 
 /// `ip-addr-type-choice` — IPv4 or IPv6 address.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IpAddr {
     /// IPv4 address (4 bytes).
     V4([u8; 4]),
@@ -250,7 +284,8 @@ impl<'de> Deserialize<'de> for IpAddr {
 // ---------------------------------------------------------------------------
 
 /// `int-range-type-choice` — integer or tagged int range.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IntRangeChoice {
     /// A single integer value.
     Int(i64),
@@ -277,7 +312,7 @@ impl Serialize for IntRangeChoice {
                     None => Value::Null,
                 };
                 let arr = Value::Array(vec![min_val, max_val]);
-                value::serialize_tagged(564, &arr, s)
+                value::serialize_tagged(TAG_INT_RANGE, &arr, s)
             }
         }
     }
@@ -287,18 +322,34 @@ impl<'de> Deserialize<'de> for IntRangeChoice {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Integer(n) => Ok(IntRangeChoice::Int(n as i64)),
-            Value::Tag(564, inner) => match *inner {
+            Value::Integer(n) => {
+                Ok(IntRangeChoice::Int(i64::try_from(n).map_err(|_| {
+                    serde::de::Error::custom("int-range value out of i64 range")
+                })?))
+            }
+            Value::Tag(TAG_INT_RANGE, inner) => match *inner {
                 Value::Array(a) if a.len() == 2 => {
                     let min = match &a[0] {
                         Value::Null => None,
-                        Value::Integer(n) => Some(*n as i64),
-                        _ => return Err(serde::de::Error::custom("int-range min must be int or null")),
+                        Value::Integer(n) => Some(i64::try_from(*n).map_err(|_| {
+                            serde::de::Error::custom("int-range min out of i64 range")
+                        })?),
+                        _ => {
+                            return Err(serde::de::Error::custom(
+                                "int-range min must be int or null",
+                            ))
+                        }
                     };
                     let max = match &a[1] {
                         Value::Null => None,
-                        Value::Integer(n) => Some(*n as i64),
-                        _ => return Err(serde::de::Error::custom("int-range max must be int or null")),
+                        Value::Integer(n) => Some(i64::try_from(*n).map_err(|_| {
+                            serde::de::Error::custom("int-range max out of i64 range")
+                        })?),
+                        _ => {
+                            return Err(serde::de::Error::custom(
+                                "int-range max must be int or null",
+                            ))
+                        }
                     };
                     Ok(IntRangeChoice::Range { min, max })
                 }
@@ -314,7 +365,8 @@ impl<'de> Deserialize<'de> for IntRangeChoice {
 // ---------------------------------------------------------------------------
 
 /// `integrity-register-id-type-choice` — uint or text key.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum IntegrityRegisterId {
     /// Unsigned integer register ID.
     Uint(u64),
@@ -335,9 +387,15 @@ impl<'de> Deserialize<'de> for IntegrityRegisterId {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Integer(n) => Ok(IntegrityRegisterId::Uint(n.try_into().map_err(|_| serde::de::Error::custom("register id must be unsigned"))?)),
+            Value::Integer(n) => {
+                Ok(IntegrityRegisterId::Uint(n.try_into().map_err(|_| {
+                    serde::de::Error::custom("register id must be unsigned")
+                })?))
+            }
             Value::Text(t) => Ok(IntegrityRegisterId::Text(t)),
-            _ => Err(serde::de::Error::custom("expected uint or text for register id")),
+            _ => Err(serde::de::Error::custom(
+                "expected uint or text for register id",
+            )),
         }
     }
 }
@@ -367,9 +425,17 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                 let mut map = BTreeMap::new();
                 for (k, v) in entries {
                     let key = match k {
-                        Value::Integer(n) => IntegrityRegisterId::Uint(n.try_into().map_err(|_| serde::de::Error::custom("register id must be unsigned"))?),
+                        Value::Integer(n) => {
+                            IntegrityRegisterId::Uint(n.try_into().map_err(|_| {
+                                serde::de::Error::custom("register id must be unsigned")
+                            })?)
+                        }
                         Value::Text(t) => IntegrityRegisterId::Text(t),
-                        _ => return Err(serde::de::Error::custom("register id must be uint or text")),
+                        _ => {
+                            return Err(serde::de::Error::custom(
+                                "register id must be uint or text",
+                            ))
+                        }
                     };
                     let digests: Vec<Digest> = match v {
                         Value::Array(arr) => {
@@ -379,16 +445,34 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                                     Value::Array(pair) if pair.len() == 2 => {
                                         let mut it = pair.into_iter();
                                         let alg = match it.next().unwrap() {
-                                            Value::Integer(n) => n as i64,
-                                            _ => return Err(serde::de::Error::custom("digest alg must be int")),
+                                            Value::Integer(n) => {
+                                                i64::try_from(n).map_err(|_| {
+                                                    serde::de::Error::custom(
+                                                        "digest alg out of i64 range",
+                                                    )
+                                                })?
+                                            }
+                                            _ => {
+                                                return Err(serde::de::Error::custom(
+                                                    "digest alg must be int",
+                                                ))
+                                            }
                                         };
                                         let val = match it.next().unwrap() {
                                             Value::Bytes(b) => b,
-                                            _ => return Err(serde::de::Error::custom("digest val must be bytes")),
+                                            _ => {
+                                                return Err(serde::de::Error::custom(
+                                                    "digest val must be bytes",
+                                                ))
+                                            }
                                         };
                                         ds.push(Digest::new(alg, val));
                                     }
-                                    _ => return Err(serde::de::Error::custom("digest must be [alg, val]")),
+                                    _ => {
+                                        return Err(serde::de::Error::custom(
+                                            "digest must be [alg, val]",
+                                        ))
+                                    }
                                 }
                             }
                             ds
@@ -399,7 +483,9 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                 }
                 Ok(IntegrityRegisters(map))
             }
-            _ => Err(serde::de::Error::custom("expected map for integrity-registers")),
+            _ => Err(serde::de::Error::custom(
+                "expected map for integrity-registers",
+            )),
         }
     }
 }
@@ -413,33 +499,47 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
 #[cbor(non_empty)]
 pub struct MeasurementValuesMap {
     /// `version` (key 0).
-    #[cbor(key = 0, optional)] pub version: Option<VersionMap>,
+    #[cbor(key = 0, optional)]
+    pub version: Option<VersionMap>,
     /// `svn` (key 1).
-    #[cbor(key = 1, optional)] pub svn: Option<SvnChoice>,
+    #[cbor(key = 1, optional)]
+    pub svn: Option<SvnChoice>,
     /// `digests` (key 2).
-    #[cbor(key = 2, optional)] pub digests: Option<Vec<Digest>>,
+    #[cbor(key = 2, optional)]
+    pub digests: Option<Vec<Digest>>,
     /// `flags` (key 3).
-    #[cbor(key = 3, optional)] pub flags: Option<FlagsMap>,
+    #[cbor(key = 3, optional)]
+    pub flags: Option<FlagsMap>,
     /// `raw-value` (key 4).
-    #[cbor(key = 4, optional)] pub raw_value: Option<RawValueChoice>,
+    #[cbor(key = 4, optional)]
+    pub raw_value: Option<RawValueChoice>,
     /// `mac-addr` (key 6).
-    #[cbor(key = 6, optional)] pub mac_addr: Option<MacAddr>,
+    #[cbor(key = 6, optional)]
+    pub mac_addr: Option<MacAddr>,
     /// `ip-addr` (key 7).
-    #[cbor(key = 7, optional)] pub ip_addr: Option<IpAddr>,
+    #[cbor(key = 7, optional)]
+    pub ip_addr: Option<IpAddr>,
     /// `serial-number` (key 8).
-    #[cbor(key = 8, optional)] pub serial_number: Option<String>,
+    #[cbor(key = 8, optional)]
+    pub serial_number: Option<String>,
     /// `ueid` (key 9).
-    #[cbor(key = 9, optional)] pub ueid: Option<Vec<u8>>,
+    #[cbor(key = 9, optional)]
+    pub ueid: Option<Vec<u8>>,
     /// `uuid` (key 10).
-    #[cbor(key = 10, optional)] pub uuid: Option<Vec<u8>>,
+    #[cbor(key = 10, optional)]
+    pub uuid: Option<Vec<u8>>,
     /// `name` (key 11).
-    #[cbor(key = 11, optional)] pub name: Option<String>,
+    #[cbor(key = 11, optional)]
+    pub name: Option<String>,
     /// `cryptokeys` (key 13).
-    #[cbor(key = 13, optional)] pub cryptokeys: Option<Vec<CryptoKey>>,
+    #[cbor(key = 13, optional)]
+    pub cryptokeys: Option<Vec<CryptoKey>>,
     /// `integrity-registers` (key 14).
-    #[cbor(key = 14, optional)] pub integrity_registers: Option<IntegrityRegisters>,
+    #[cbor(key = 14, optional)]
+    pub integrity_registers: Option<IntegrityRegisters>,
     /// `int-range` (key 15).
-    #[cbor(key = 15, optional)] pub int_range: Option<IntRangeChoice>,
+    #[cbor(key = 15, optional)]
+    pub int_range: Option<IntRangeChoice>,
 }
 
 impl MeasurementValuesMap {
@@ -467,7 +567,48 @@ impl MeasurementValuesMap {
 }
 
 impl Default for MeasurementValuesMap {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Validate for MeasurementValuesMap {
+    fn valid(&self) -> Result<(), String> {
+        // CDDL: non-empty<{ ... }>
+        if self.version.is_none()
+            && self.svn.is_none()
+            && self.digests.is_none()
+            && self.flags.is_none()
+            && self.raw_value.is_none()
+            && self.mac_addr.is_none()
+            && self.ip_addr.is_none()
+            && self.serial_number.is_none()
+            && self.ueid.is_none()
+            && self.uuid.is_none()
+            && self.name.is_none()
+            && self.cryptokeys.is_none()
+            && self.integrity_registers.is_none()
+            && self.int_range.is_none()
+        {
+            return Err("no measurement value set".into());
+        }
+        // Validate digests if present: at least one digest required
+        if let Some(ref digests) = self.digests {
+            if digests.is_empty() {
+                return Err("digests list must not be empty".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Validate for MeasurementMap {
+    fn valid(&self) -> Result<(), String> {
+        self.mval
+            .valid()
+            .map_err(|e| format!("measurement values: {e}"))?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -478,25 +619,32 @@ impl Default for MeasurementValuesMap {
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
 pub struct MeasurementMap {
     /// `mkey` (key 0): optional measurement key.
-    #[cbor(key = 0, optional)] pub mkey: Option<MeasuredElement>,
+    #[cbor(key = 0, optional)]
+    pub mkey: Option<MeasuredElement>,
     /// `mval` (key 1): measurement values.
-    #[cbor(key = 1)] pub mval: MeasurementValuesMap,
+    #[cbor(key = 1)]
+    pub mval: MeasurementValuesMap,
     /// `authorized-by` (key 2): optional authority keys.
-    #[cbor(key = 2, optional)] pub authorized_by: Option<Vec<CryptoKey>>,
+    #[cbor(key = 2, optional)]
+    pub authorized_by: Option<Vec<CryptoKey>>,
 }
 
 /// Serde helper for bytes fields in Digest.
 mod serde_bytes {
-    use serde::{self, Deserialize, Deserializer, Serializer};
     use crate::cbor::value::Value;
+    use serde::{self, Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         serializer.serialize_bytes(bytes)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         let val = Value::deserialize(deserializer)?;
         match val {
             Value::Bytes(b) => Ok(b),
@@ -505,10 +653,14 @@ mod serde_bytes {
                 for v in arr {
                     match v {
                         Value::Integer(i) => {
-                            let b: u8 = i.try_into().map_err(|_| serde::de::Error::custom("byte value out of range"))?;
+                            let b: u8 = i
+                                .try_into()
+                                .map_err(|_| serde::de::Error::custom("byte value out of range"))?;
                             bytes.push(b);
                         }
-                        _ => return Err(serde::de::Error::custom("expected integer in byte array")),
+                        _ => {
+                            return Err(serde::de::Error::custom("expected integer in byte array"))
+                        }
                     }
                 }
                 Ok(bytes)

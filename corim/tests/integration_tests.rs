@@ -3,8 +3,8 @@
 
 //! Tests for the corim crate.
 //!
-//! Covers derive macro round-trips, builder API, UUIDv5 derivation,
-//! CBOR encoding, and validation.
+//! Covers derive macro round-trips, builder API, CBOR encoding,
+//! and validation.
 
 #[cfg(test)]
 mod derive_tests {
@@ -163,61 +163,99 @@ mod measurement_tests {
 
 #[cfg(test)]
 mod builder_tests {
-    use corim::builder::{derive_tag_id, ComidBuilder, CorimBuilder};
+    use corim::builder::{ComidBuilder, CorimBuilder};
     use corim::cbor;
+    use corim::types::common::{MeasuredElement, TagIdChoice};
     use corim::types::corim::CorimId;
-    use corim::types::measurement::{Digest, SvnChoice};
+    use corim::types::environment::{ClassMap, EnvironmentMap};
+    use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
+    use corim::types::triples::{
+        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
+    };
 
-    #[test]
-    fn uuid5_derivation_intel_tdx() {
-        let tag_id = derive_tag_id("Intel", "TDX");
-        assert_eq!(
-            tag_id.to_string().to_uppercase(),
-            "E0510081-7B78-5B2A-97A6-D73D890E07B6"
-        );
+    fn make_env() -> EnvironmentMap {
+        EnvironmentMap {
+            class: Some(ClassMap {
+                class_id: None,
+                vendor: Some("ACME".into()),
+                model: Some("Widget".into()),
+                layer: None,
+                index: None,
+            }),
+            instance: None,
+            group: None,
+        }
+    }
+
+    fn make_ref_measurement(mkey: &str, digest: Vec<u8>) -> MeasurementMap {
+        MeasurementMap {
+            mkey: Some(MeasuredElement::Text(mkey.into())),
+            mval: MeasurementValuesMap {
+                digests: Some(vec![Digest::new(7, digest)]),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        }
     }
 
     #[test]
-    fn uuid5_derivation_amd_sev_snp() {
-        let tag_id = derive_tag_id("AMD", "SEV-SNP");
-        assert_eq!(
-            tag_id.to_string().to_uppercase(),
-            "77E8061E-4634-5E53-A848-D1D09E996843"
-        );
-    }
+    fn comid_builder_with_reference_triple() {
+        let env = make_env();
+        let meas = make_ref_measurement("firmware", vec![0xAA; 48]);
 
-    #[test]
-    fn uuid5_derivation_microsoft_vbs() {
-        let tag_id = derive_tag_id("Microsoft", "VBS-CVM");
-        assert_eq!(
-            tag_id.to_string().to_uppercase(),
-            "5EB4C952-E0E3-5FB4-9D45-3DB12FF1D5AF"
-        );
-    }
-
-    #[test]
-    fn comid_builder_basic() {
-        let comid = ComidBuilder::for_platform("AMD", "SEV-SNP")
-            .add_reference_value("MEASUREMENT", vec![Digest::new(7, vec![0xAA; 48])])
+        let comid = ComidBuilder::new(TagIdChoice::Text("test-tag-001".into()))
+            .add_reference_triple(ReferenceTriple::new(env, vec![meas]))
             .build()
             .unwrap();
 
         assert_eq!(
             comid.tag_identity.tag_id,
-            corim::types::common::TagIdChoice::Text("77E8061E-4634-5E53-A848-D1D09E996843".into())
+            TagIdChoice::Text("test-tag-001".into())
         );
         assert!(comid.triples.reference_triples.is_some());
     }
 
     #[test]
+    fn comid_builder_with_uuid_tag_id() {
+        let env = make_env();
+        let meas = make_ref_measurement("firmware", vec![0xAA; 48]);
+        let uuid_bytes = [0x01u8; 16];
+
+        let comid = ComidBuilder::new(TagIdChoice::Uuid(uuid_bytes))
+            .add_reference_triple(ReferenceTriple::new(env, vec![meas]))
+            .build()
+            .unwrap();
+
+        assert_eq!(comid.tag_identity.tag_id, TagIdChoice::Uuid(uuid_bytes));
+    }
+
+    #[test]
     fn comid_builder_with_ces() {
-        let comid = ComidBuilder::for_platform("AMD", "SEV-SNP")
-            .add_reference_value("MEASUREMENT", vec![Digest::new(7, vec![0xAA; 48])])
-            .add_conditional_endorsement_series(
-                "MEASUREMENT",
-                Digest::new(7, vec![0xAA; 48]),
-                SvnChoice::ExactValue(1),
-            )
+        let env = make_env();
+        let meas = make_ref_measurement("firmware", vec![0xAA; 48]);
+
+        let ces_triple = ConditionalEndorsementSeriesTriple::new(
+            CesCondition {
+                environment: env.clone(),
+                claims_list: Vec::new(),
+                authorized_by: None,
+            },
+            vec![ConditionalSeriesRecord::new(
+                vec![make_ref_measurement("firmware", vec![0xAA; 48])],
+                vec![MeasurementMap {
+                    mkey: None,
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::ExactValue(1)),
+                        ..MeasurementValuesMap::default()
+                    },
+                    authorized_by: None,
+                }],
+            )],
+        );
+
+        let comid = ComidBuilder::new(TagIdChoice::Text("test-tag-002".into()))
+            .add_reference_triple(ReferenceTriple::new(env, vec![meas]))
+            .add_conditional_endorsement_series(ces_triple)
             .build()
             .unwrap();
 
@@ -227,22 +265,22 @@ mod builder_tests {
 
     #[test]
     fn comid_builder_empty_triples_fails() {
-        let result = ComidBuilder::for_platform("AMD", "SEV-SNP").build();
+        let result = ComidBuilder::new(TagIdChoice::Text("empty".into())).build();
         assert!(result.is_err());
     }
 
     #[test]
     fn corim_builder_round_trip() {
-        let comid = ComidBuilder::for_platform("AMD", "SEV-SNP")
-            .add_reference_value("MEASUREMENT", vec![Digest::new(7, vec![0xAA; 48])])
-            .add_conditional_endorsement_series(
-                "MEASUREMENT",
-                Digest::new(7, vec![0xAA; 48]),
-                SvnChoice::ExactValue(1),
-            );
+        let env = make_env();
+        let meas = make_ref_measurement("firmware", vec![0xAA; 48]);
+
+        let comid = ComidBuilder::new(TagIdChoice::Text("test-tag-003".into()))
+            .add_reference_triple(ReferenceTriple::new(env, vec![meas]))
+            .build()
+            .unwrap();
 
         let bytes = CorimBuilder::new(CorimId::Text("test-corim-001".into()))
-            .add_comid(comid)
+            .add_comid_tag(comid)
             .unwrap()
             .build_bytes()
             .unwrap();
@@ -260,39 +298,55 @@ mod builder_tests {
         let result = CorimBuilder::new(CorimId::Text("empty".into())).build();
         assert!(result.is_err());
     }
+
+    #[test]
+    fn corim_builder_with_coswid_tag() {
+        let coswid_bytes = vec![0xA0]; // minimal empty CBOR map for testing
+        let corim = CorimBuilder::new(CorimId::Text("coswid-test".into()))
+            .add_coswid_tag(coswid_bytes)
+            .build()
+            .unwrap();
+
+        assert_eq!(corim.tags.len(), 1);
+        match &corim.tags[0] {
+            corim::types::corim::ConciseTagChoice::Coswid(_) => {}
+            other => panic!("Expected Coswid tag, got {:?}", other),
+        }
+    }
 }
 
 #[cfg(test)]
 mod validation_tests {
     use corim::builder::{ComidBuilder, CorimBuilder};
+    use corim::types::common::{MeasuredElement, TagIdChoice};
     use corim::types::corim::CorimId;
     use corim::types::environment::{ClassMap, EnvironmentMap};
     use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
+    use corim::types::triples::{
+        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
+    };
     use corim::validate::{
         apply_endorsement_series, match_reference_values, svn_matches, AppraisalContext,
         EvidenceClaim,
     };
 
-    fn make_test_corim_bytes() -> Vec<u8> {
-        let comid = ComidBuilder::for_platform("AMD", "SEV-SNP")
-            .add_reference_value("MEASUREMENT", vec![Digest::new(7, vec![0xAA; 48])])
-            .add_conditional_endorsement_series(
-                "MEASUREMENT",
-                Digest::new(7, vec![0xAA; 48]),
-                SvnChoice::ExactValue(1),
-            );
-
-        CorimBuilder::new(CorimId::Text("test-validation".into()))
-            .set_validity(None, i64::MAX)
-            .add_comid(comid)
-            .unwrap()
-            .build_bytes()
-            .unwrap()
+    fn make_env() -> EnvironmentMap {
+        EnvironmentMap {
+            class: Some(ClassMap {
+                class_id: None,
+                vendor: Some("ACME".into()),
+                model: Some("Widget".into()),
+                layer: None,
+                index: None,
+            }),
+            instance: None,
+            group: None,
+        }
     }
 
     fn make_measurement(mkey: &str, digest: Vec<u8>) -> MeasurementMap {
         MeasurementMap {
-            mkey: Some(corim::types::common::MeasuredElement::Text(mkey.into())),
+            mkey: Some(MeasuredElement::Text(mkey.into())),
             mval: MeasurementValuesMap {
                 digests: Some(vec![Digest::new(7, digest)]),
                 ..MeasurementValuesMap::default()
@@ -301,18 +355,45 @@ mod validation_tests {
         }
     }
 
-    fn make_env() -> EnvironmentMap {
-        EnvironmentMap {
-            class: Some(ClassMap {
-                class_id: None,
-                vendor: Some("AMD".into()),
-                model: Some("SEV-SNP".into()),
-                layer: None,
-                index: None,
-            }),
-            instance: None,
-            group: None,
-        }
+    fn make_test_comid() -> corim::types::comid::ComidTag {
+        let env = make_env();
+        let ces_triple = ConditionalEndorsementSeriesTriple::new(
+            CesCondition {
+                environment: env.clone(),
+                claims_list: Vec::new(),
+                authorized_by: None,
+            },
+            vec![ConditionalSeriesRecord::new(
+                vec![make_measurement("firmware", vec![0xAA; 48])],
+                vec![MeasurementMap {
+                    mkey: None,
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::ExactValue(1)),
+                        ..MeasurementValuesMap::default()
+                    },
+                    authorized_by: None,
+                }],
+            )],
+        );
+
+        ComidBuilder::new(TagIdChoice::Text("validation-comid".into()))
+            .add_reference_triple(ReferenceTriple::new(
+                env,
+                vec![make_measurement("firmware", vec![0xAA; 48])],
+            ))
+            .add_conditional_endorsement_series(ces_triple)
+            .build()
+            .unwrap()
+    }
+
+    fn make_test_corim_bytes() -> Vec<u8> {
+        CorimBuilder::new(CorimId::Text("test-validation".into()))
+            .set_validity(None, i64::MAX)
+            .unwrap()
+            .add_comid_tag(make_test_comid())
+            .unwrap()
+            .build_bytes()
+            .unwrap()
     }
 
     #[test]
@@ -325,12 +406,12 @@ mod validation_tests {
 
     #[test]
     fn decode_and_validate_expired() {
-        let comid = ComidBuilder::for_platform("AMD", "SEV-SNP")
-            .add_reference_value("MEASUREMENT", vec![Digest::new(7, vec![0xAA; 48])]);
+        let comid = make_test_comid();
 
         let bytes = CorimBuilder::new(CorimId::Text("expired".into()))
-            .set_validity(None, 0) // epoch = expired
-            .add_comid(comid)
+            .set_validity(None, 0)
+            .unwrap() // epoch = expired
+            .add_comid_tag(comid)
             .unwrap()
             .build_bytes()
             .unwrap();
@@ -345,14 +426,14 @@ mod validation_tests {
     fn reference_value_matching() {
         let env = make_env();
 
-        let ref_triples = vec![corim::types::triples::ReferenceTriple::new(
+        let ref_triples = vec![ReferenceTriple::new(
             env.clone(),
-            vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            vec![make_measurement("firmware", vec![0xAA; 48])],
         )];
 
         let evidence = vec![EvidenceClaim {
             environment: env.clone(),
-            measurements: vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            measurements: vec![make_measurement("firmware", vec![0xAA; 48])],
         }];
 
         let result = match_reference_values(&ref_triples, &evidence);
@@ -363,14 +444,14 @@ mod validation_tests {
     fn reference_value_digest_mismatch() {
         let env = make_env();
 
-        let ref_triples = vec![corim::types::triples::ReferenceTriple::new(
+        let ref_triples = vec![ReferenceTriple::new(
             env.clone(),
-            vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            vec![make_measurement("firmware", vec![0xAA; 48])],
         )];
 
         let evidence = vec![EvidenceClaim {
             environment: env.clone(),
-            measurements: vec![make_measurement("MEASUREMENT", vec![0xBB; 48])],
+            measurements: vec![make_measurement("firmware", vec![0xBB; 48])],
         }];
 
         let result = match_reference_values(&ref_triples, &evidence);
@@ -381,15 +462,15 @@ mod validation_tests {
     fn reference_value_no_common_algorithms() {
         let env = make_env();
 
-        let ref_triples = vec![corim::types::triples::ReferenceTriple::new(
+        let ref_triples = vec![ReferenceTriple::new(
             env.clone(),
-            vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            vec![make_measurement("firmware", vec![0xAA; 48])],
         )];
 
         let evidence = vec![EvidenceClaim {
             environment: env.clone(),
             measurements: vec![MeasurementMap {
-                mkey: Some(corim::types::common::MeasuredElement::Text("MEASUREMENT".into())),
+                mkey: Some(MeasuredElement::Text("firmware".into())),
                 mval: MeasurementValuesMap {
                     digests: Some(vec![Digest::new(1, vec![0xAA; 32])]), // SHA-256 (different alg)
                     ..MeasurementValuesMap::default()
@@ -420,43 +501,41 @@ mod validation_tests {
     fn conditional_endorsement_series_application() {
         let env = make_env();
 
-        let ces = vec![
-            corim::types::triples::ConditionalEndorsementSeriesTriple::new(
-                corim::types::triples::CesCondition {
-                    environment: env.clone(),
-                    claims_list: Vec::new(),
-                    authorized_by: None,
-                },
-                vec![
-                    corim::types::triples::ConditionalSeriesRecord::new(
-                        vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
-                        vec![MeasurementMap {
-                            mkey: None,
-                            mval: MeasurementValuesMap {
-                                svn: Some(SvnChoice::ExactValue(1)),
-                                ..MeasurementValuesMap::default()
-                            },
-                            authorized_by: None,
-                        }],
-                    ),
-                    corim::types::triples::ConditionalSeriesRecord::new(
-                        vec![make_measurement("MEASUREMENT", vec![0xBB; 48])],
-                        vec![MeasurementMap {
-                            mkey: None,
-                            mval: MeasurementValuesMap {
-                                svn: Some(SvnChoice::ExactValue(2)),
-                                ..MeasurementValuesMap::default()
-                            },
-                            authorized_by: None,
-                        }],
-                    ),
-                ],
-            ),
-        ];
+        let ces = vec![ConditionalEndorsementSeriesTriple::new(
+            CesCondition {
+                environment: env.clone(),
+                claims_list: Vec::new(),
+                authorized_by: None,
+            },
+            vec![
+                ConditionalSeriesRecord::new(
+                    vec![make_measurement("firmware", vec![0xAA; 48])],
+                    vec![MeasurementMap {
+                        mkey: None,
+                        mval: MeasurementValuesMap {
+                            svn: Some(SvnChoice::ExactValue(1)),
+                            ..MeasurementValuesMap::default()
+                        },
+                        authorized_by: None,
+                    }],
+                ),
+                ConditionalSeriesRecord::new(
+                    vec![make_measurement("firmware", vec![0xBB; 48])],
+                    vec![MeasurementMap {
+                        mkey: None,
+                        mval: MeasurementValuesMap {
+                            svn: Some(SvnChoice::ExactValue(2)),
+                            ..MeasurementValuesMap::default()
+                        },
+                        authorized_by: None,
+                    }],
+                ),
+            ],
+        )];
 
         let evidence = vec![EvidenceClaim {
             environment: env.clone(),
-            measurements: vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            measurements: vec![make_measurement("firmware", vec![0xAA; 48])],
         }];
 
         let endorsed = apply_endorsement_series(&ces, &evidence).unwrap();
@@ -469,38 +548,36 @@ mod validation_tests {
     fn appraisal_context_full_flow() {
         let env = make_env();
 
-        let ref_triples = vec![corim::types::triples::ReferenceTriple::new(
+        let ref_triples = vec![ReferenceTriple::new(
             env.clone(),
-            vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            vec![make_measurement("firmware", vec![0xAA; 48])],
         )];
 
-        let ces = vec![
-            corim::types::triples::ConditionalEndorsementSeriesTriple::new(
-                corim::types::triples::CesCondition {
-                    environment: env.clone(),
-                    claims_list: Vec::new(),
+        let ces = vec![ConditionalEndorsementSeriesTriple::new(
+            CesCondition {
+                environment: env.clone(),
+                claims_list: Vec::new(),
+                authorized_by: None,
+            },
+            vec![ConditionalSeriesRecord::new(
+                vec![make_measurement("firmware", vec![0xAA; 48])],
+                vec![MeasurementMap {
+                    mkey: None,
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::ExactValue(1)),
+                        ..MeasurementValuesMap::default()
+                    },
                     authorized_by: None,
-                },
-                vec![corim::types::triples::ConditionalSeriesRecord::new(
-                    vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
-                    vec![MeasurementMap {
-                        mkey: None,
-                        mval: MeasurementValuesMap {
-                            svn: Some(SvnChoice::ExactValue(1)),
-                            ..MeasurementValuesMap::default()
-                        },
-                        authorized_by: None,
-                    }],
-                )],
-            ),
-        ];
+                }],
+            )],
+        )];
 
         let mut acs = AppraisalContext::new();
 
         // Phase 2: Add evidence
         acs.add_evidence(vec![EvidenceClaim {
             environment: env.clone(),
-            measurements: vec![make_measurement("MEASUREMENT", vec![0xAA; 48])],
+            measurements: vec![make_measurement("firmware", vec![0xAA; 48])],
         }]);
 
         // Phase 3: Reference values
@@ -567,10 +644,7 @@ mod typed_triple_tests {
 
     #[test]
     fn domain_dependency_triple_round_trip() {
-        let triple = DomainDependencyTriple::new(
-            make_env(),
-            vec![make_env()],
-        );
+        let triple = DomainDependencyTriple::new(make_env(), vec![make_env()]);
 
         let bytes = cbor::encode(&triple).unwrap();
         let decoded: DomainDependencyTriple = cbor::decode(&bytes).unwrap();
@@ -580,10 +654,7 @@ mod typed_triple_tests {
 
     #[test]
     fn domain_membership_triple_round_trip() {
-        let triple = DomainMembershipTriple::new(
-            make_env(),
-            vec![make_env()],
-        );
+        let triple = DomainMembershipTriple::new(make_env(), vec![make_env()]);
 
         let bytes = cbor::encode(&triple).unwrap();
         let decoded: DomainMembershipTriple = cbor::decode(&bytes).unwrap();
@@ -592,10 +663,7 @@ mod typed_triple_tests {
 
     #[test]
     fn coswid_triple_round_trip() {
-        let triple = CoswidTriple::new(
-            make_env(),
-            vec![TagIdChoice::Text("test-tag-id".into())],
-        );
+        let triple = CoswidTriple::new(make_env(), vec![TagIdChoice::Text("test-tag-id".into())]);
 
         let bytes = cbor::encode(&triple).unwrap();
         let decoded: CoswidTriple = cbor::decode(&bytes).unwrap();
@@ -659,8 +727,8 @@ mod typed_triple_tests {
 #[cfg(test)]
 mod corim_type_tests {
     use corim::cbor;
+    use corim::types::common::{CborTime, TagIdChoice, TagIdentity, ValidityMap};
     use corim::types::corim::*;
-    use corim::types::common::{TagIdentity, TagIdChoice, ValidityMap};
 
     #[test]
     fn corim_signer_map_round_trip() {
@@ -682,8 +750,8 @@ mod corim_type_tests {
                 signer_uri: None,
             },
             signature_validity: Some(ValidityMap {
-                not_before: Some(1000),
-                not_after: 2000,
+                not_before: Some(CborTime(1000)),
+                not_after: CborTime(2000),
             }),
         };
 
@@ -699,15 +767,13 @@ mod corim_type_tests {
                 tag_id: TagIdChoice::Text("cotl-1".into()),
                 tag_version: Some(0),
             },
-            tags_list: vec![
-                TagIdentity {
-                    tag_id: TagIdChoice::Text("comid-1".into()),
-                    tag_version: None,
-                },
-            ],
+            tags_list: vec![TagIdentity {
+                tag_id: TagIdChoice::Text("comid-1".into()),
+                tag_version: None,
+            }],
             tl_validity: ValidityMap {
                 not_before: None,
-                not_after: 9999999999,
+                not_after: CborTime(9999999999),
             },
         };
 
@@ -761,7 +827,10 @@ mod measurement_extension_tests {
     #[test]
     fn int_range_round_trip() {
         let mval = MeasurementValuesMap {
-            int_range: Some(IntRangeChoice::Range { min: Some(0), max: Some(100) }),
+            int_range: Some(IntRangeChoice::Range {
+                min: Some(0),
+                max: Some(100),
+            }),
             ..MeasurementValuesMap::default()
         };
 
@@ -773,7 +842,10 @@ mod measurement_extension_tests {
     #[test]
     fn int_range_unbounded_round_trip() {
         let mval = MeasurementValuesMap {
-            int_range: Some(IntRangeChoice::Range { min: None, max: Some(50) }),
+            int_range: Some(IntRangeChoice::Range {
+                min: None,
+                max: Some(50),
+            }),
             ..MeasurementValuesMap::default()
         };
 

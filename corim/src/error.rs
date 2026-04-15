@@ -7,6 +7,7 @@ use thiserror::Error;
 
 /// Errors from CBOR encoding.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum EncodeError {
     /// CBOR serialization failed.
     #[error("CBOR serialization failed: {0}")]
@@ -15,6 +16,7 @@ pub enum EncodeError {
 
 /// Errors from CBOR decoding.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum DecodeError {
     /// CBOR deserialization failed.
     #[error("CBOR deserialization failed: {0}")]
@@ -36,6 +38,7 @@ pub enum DecodeError {
 
 /// Errors from the builder API.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum BuilderError {
     /// A required field was not set.
     #[error("missing required field: {0}")]
@@ -49,6 +52,21 @@ pub enum BuilderError {
     #[error("at least one CoMID tag is required")]
     NoTags,
 
+    /// A list that must be non-empty (CDDL `[+ T]`) was empty.
+    #[error("CDDL requires [+ {field}] but the list is empty")]
+    EmptyList {
+        /// Name of the field.
+        field: &'static str,
+    },
+
+    /// Validity constraint violated (not_before > not_after).
+    #[error("invalid validity: not_before must be <= not_after")]
+    InvalidValidity,
+
+    /// A validation error from a type's `Valid()` check.
+    #[error("validation error: {0}")]
+    Validation(String),
+
     /// An encoding error occurred during building.
     #[error("encoding error: {0}")]
     Encode(#[from] EncodeError),
@@ -56,6 +74,7 @@ pub enum BuilderError {
 
 /// Errors from validation / appraisal.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ValidationError {
     /// A decode error occurred during validation.
     #[error("decode error: {0}")]
@@ -65,6 +84,14 @@ pub enum ValidationError {
     #[error("CoRIM has expired (not-after is in the past)")]
     Expired,
 
+    /// The CoRIM is not yet valid (not-before is in the future).
+    #[error("CoRIM is not yet valid (not-before is in the future)")]
+    NotYetValid,
+
+    /// No CoMID tags were found in the CoRIM.
+    #[error("no CoMID tags found in the CoRIM")]
+    NoComidTags,
+
     /// The CoMID tag-identity is missing tag-id.
     #[error("CoMID tag-identity is missing tag-id")]
     MissingTagId,
@@ -72,6 +99,14 @@ pub enum ValidationError {
     /// The CoMID triples map is empty.
     #[error("CoMID triples map is empty")]
     EmptyTriples,
+
+    /// The CoTL tags-list is empty.
+    #[error("CoTL tags-list is empty")]
+    EmptyTagsList,
+
+    /// A type-level validation failed.
+    #[error("{0}")]
+    Invalid(String),
 
     /// A non-empty constraint was violated.
     #[error("non-empty constraint violated: {0}")]
@@ -100,4 +135,17 @@ pub enum ValidationError {
     /// Conditional endorsement series entries use inconsistent mkeys.
     #[error("conditional-endorsement-series entries use inconsistent mkeys")]
     InconsistentMkeys,
+
+    /// System clock error.
+    #[error("system clock error: {0}")]
+    Clock(String),
+
+    /// Input payload exceeds maximum allowed size.
+    #[error("input payload too large: {size} bytes (max {max})")]
+    PayloadTooLarge {
+        /// Actual size in bytes.
+        size: usize,
+        /// Maximum allowed size in bytes.
+        max: usize,
+    },
 }

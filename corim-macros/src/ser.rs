@@ -19,7 +19,12 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     let data = match &input.data {
         Data::Struct(s) => s,
-        _ => return Err(syn::Error::new_spanned(input, "CborSerialize only supports structs")),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "CborSerialize only supports structs",
+            ))
+        }
     };
 
     let fields = parse_fields(data)?;
@@ -110,15 +115,16 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                 {
                     use serde::ser::Error as _;
 
-                    let inner = _CborInner(self);
+                    let inner = __CborSerInner(self);
                     crate::cbor::value::Tagged::new(#tag, inner).serialize(serializer)
                 }
             }
 
             // A helper newtype for the inner map serialization (without tag).
-            struct _CborInner<'a>(pub &'a #name);
+            // Uses a name unlikely to collide in user code.
+            struct __CborSerInner<'a>(pub &'a #name);
 
-            impl<'a> serde::Serialize for _CborInner<'a> {
+            impl<'a> serde::Serialize for __CborSerInner<'a> {
                 #serialize_body
             }
         }

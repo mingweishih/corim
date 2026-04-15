@@ -11,30 +11,142 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::cbor;
 use crate::error::ValidationError;
 use crate::types::comid::ComidTag;
-use crate::types::corim::{ConciseTagChoice, CorimMap};
+use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
+use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::{Digest, MeasurementMap, SvnChoice};
+use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
     ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
 };
+use crate::Validate;
 
 // ---------------------------------------------------------------------------
 // Phase 1: Input validation (§9.2)
 // ---------------------------------------------------------------------------
 
+/// Maximum allowed CoRIM payload size (16 MiB).
+///
+/// Prevents denial-of-service from unbounded memory allocation when decoding
+/// untrusted input.
+pub const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
+
+/// Result of decoding and validating a CoRIM document.
+///
+/// Contains the decoded `CorimMap` and all extracted/validated tags.
+#[derive(Clone, Debug)]
+pub struct ValidatedCorim {
+    /// The decoded top-level CoRIM map.
+    pub corim: CorimMap,
+    /// Decoded CoMID tags (tag 506).
+    pub comids: Vec<ComidTag>,
+    /// Decoded CoTL tags (tag 508).
+    pub cotls: Vec<ConciseTlTag>,
+    /// Decoded CoSWID tags (tag 505).
+    pub coswids: Vec<ConciseSwidTag>,
+    /// Number of CoSWID tags that failed structured decoding (opaque).
+    pub coswid_opaque_count: usize,
+}
+
 /// Decode CBOR bytes as a CoRIM and validate structural requirements.
 ///
 /// Expects the bytes to be a CBOR tag-501-wrapped `corim-map`. Validates:
+/// - Payload does not exceed [`MAX_PAYLOAD_SIZE`]
 /// - `rim-validity` is not expired (if present)
 /// - Each CoMID tag decodes correctly and has non-empty triples
+///
+/// Uses the system clock for validity checks. For deterministic testing,
+/// use [`decode_and_validate_at`] with an explicit timestamp.
 pub fn decode_and_validate(bytes: &[u8]) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ValidationError::Clock(e.to_string()))?
+        .as_secs();
+    let now = i64::try_from(secs)
+        .map_err(|_| ValidationError::Clock("system clock beyond i64 range".into()))?;
+    decode_and_validate_at(bytes, now)
+}
+
+/// Decode and validate a CoRIM with an explicit "now" timestamp.
+///
+/// Same as [`decode_and_validate`] but uses the provided `now_epoch_secs`
+/// instead of the system clock. This is useful for deterministic testing.
+pub fn decode_and_validate_at(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
+    let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    Ok((validated.corim, validated.comids))
+}
+
+/// Validate a single CoMID tag.
+fn validate_comid(comid: &ComidTag) -> Result<(), ValidationError> {
+    comid.valid().map_err(ValidationError::Invalid)
+}
+
+/// Validate a single CoTL tag (§6.1).
+///
+/// Checks:
+/// - `tags-list` is non-empty
+/// - `tl-validity` is within the current time window
+fn validate_cotl(cotl: &ConciseTlTag, now_epoch_secs: i64) -> Result<(), ValidationError> {
+    if cotl.tags_list.is_empty() {
+        return Err(ValidationError::EmptyTagsList);
+    }
+
+    // Check CoTL validity window
+    if let Some(nb) = cotl.tl_validity.not_before {
+        if now_epoch_secs < nb.epoch_secs() {
+            return Err(ValidationError::NotYetValid);
+        }
+    }
+    if cotl.tl_validity.not_after.epoch_secs() < now_epoch_secs {
+        return Err(ValidationError::Expired);
+    }
+
+    Ok(())
+}
+
+/// Decode and validate a CoRIM, returning all extracted tag types.
+///
+/// Like [`decode_and_validate`] but returns a [`ValidatedCorim`] with
+/// CoMID, CoTL, and CoSWID counts.
+pub fn decode_and_validate_full(bytes: &[u8]) -> Result<ValidatedCorim, ValidationError> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ValidationError::Clock(e.to_string()))?
+        .as_secs();
+    let now = i64::try_from(secs)
+        .map_err(|_| ValidationError::Clock("system clock beyond i64 range".into()))?;
+    decode_and_validate_full_at(bytes, now)
+}
+
+/// Decode and validate a CoRIM with an explicit timestamp, returning all tag types.
+pub fn decode_and_validate_full_at(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+) -> Result<ValidatedCorim, ValidationError> {
+    decode_and_validate_full_impl(bytes, now_epoch_secs)
+}
+
+/// Internal unified implementation — decodes all tags in a single pass.
+fn decode_and_validate_full_impl(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+) -> Result<ValidatedCorim, ValidationError> {
+    if bytes.len() > MAX_PAYLOAD_SIZE {
+        return Err(ValidationError::PayloadTooLarge {
+            size: bytes.len(),
+            max: MAX_PAYLOAD_SIZE,
+        });
+    }
     // Decode the tag-501 wrapped CoRIM
     let tagged: cbor::value::Tagged<CorimMap> =
         cbor::decode(bytes).map_err(ValidationError::Decode)?;
-    if tagged.tag != 501 {
+    if tagged.tag != TAG_CORIM {
         return Err(ValidationError::Decode(
             crate::error::DecodeError::UnexpectedTag {
-                expected: 501,
+                expected: TAG_CORIM,
                 found: tagged.tag,
             },
         ));
@@ -43,56 +155,61 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<(CorimMap, Vec<ComidTag>), Va
 
     // Check rim-validity
     if let Some(ref validity) = corim.rim_validity {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        if validity.not_after < now {
+        if let Some(nb) = validity.not_before {
+            if now_epoch_secs < nb.epoch_secs() {
+                return Err(ValidationError::NotYetValid);
+            }
+        }
+        if validity.not_after.epoch_secs() < now_epoch_secs {
             return Err(ValidationError::Expired);
         }
     }
 
-    // Extract and validate each CoMID
+    // Extract and validate each tag — single pass
     let mut comids = Vec::new();
+    let mut cotls = Vec::new();
+    let mut coswids = Vec::new();
+    let mut coswid_opaque_count = 0usize;
     for tag in &corim.tags {
         match tag {
             ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag =
-                    cbor::decode(comid_bytes).map_err(ValidationError::Decode)?;
+                let comid: ComidTag = cbor::decode(comid_bytes).map_err(ValidationError::Decode)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
-            // Skip non-CoMID tags (CoSWID, CoTL, Unknown)
-            _ => {}
+            ConciseTagChoice::Cotl(cotl_bytes) => {
+                let cotl: ConciseTlTag =
+                    cbor::decode(cotl_bytes).map_err(ValidationError::Decode)?;
+                validate_cotl(&cotl, now_epoch_secs)?;
+                cotls.push(cotl);
+            }
+            ConciseTagChoice::Coswid(coswid_bytes) => {
+                // Try structured decode; fall back to opaque count
+                match cbor::decode::<ConciseSwidTag>(coswid_bytes) {
+                    Ok(coswid) => {
+                        coswid.valid().map_err(ValidationError::Invalid)?;
+                        coswids.push(coswid);
+                    }
+                    Err(_) => coswid_opaque_count += 1,
+                }
+            }
+            _ => {
+                // Unknown tag types: forward-compat, skip silently
+            }
         }
     }
 
     if comids.is_empty() {
-        return Err(ValidationError::EmptyTriples);
+        return Err(ValidationError::NoComidTags);
     }
 
-    Ok((corim, comids))
-}
-
-/// Validate a single CoMID tag.
-fn validate_comid(comid: &ComidTag) -> Result<(), ValidationError> {
-    let t = &comid.triples;
-    let has_triples = t.reference_triples.is_some()
-        || t.endorsed_triples.is_some()
-        || t.identity_triples.is_some()
-        || t.attest_key_triples.is_some()
-        || t.dependency_triples.is_some()
-        || t.membership_triples.is_some()
-        || t.coswid_triples.is_some()
-        || t.conditional_endorsement_series.is_some()
-        || t.conditional_endorsement.is_some();
-
-    if !has_triples {
-        return Err(ValidationError::EmptyTriples);
-    }
-
-    Ok(())
+    Ok(ValidatedCorim {
+        corim,
+        comids,
+        cotls,
+        coswids,
+        coswid_opaque_count,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -207,16 +324,28 @@ pub fn apply_endorsement_series(
 }
 
 /// Validate that all series entries use the same `mkey`s (§5.1.8.1.1).
+///
+/// Comparison is set-based (order-independent) to handle producers that
+/// may reorder measurement-map entries within a series record.
 fn validate_series_mkeys(series: &[ConditionalSeriesRecord]) -> Result<(), ValidationError> {
     if series.len() <= 1 {
         return Ok(());
     }
 
-    let first_mkeys: Vec<_> = series[0].selection().iter().map(|m| &m.mkey).collect();
+    let collect_mkeys = |record: &ConditionalSeriesRecord| -> Vec<String> {
+        let mut keys: Vec<String> = record
+            .selection()
+            .iter()
+            .map(|m| format!("{:?}", m.mkey))
+            .collect();
+        keys.sort();
+        keys
+    };
+
+    let first_mkeys = collect_mkeys(&series[0]);
 
     for record in &series[1..] {
-        let mkeys: Vec<_> = record.selection().iter().map(|m| &m.mkey).collect();
-        if mkeys != first_mkeys {
+        if collect_mkeys(record) != first_mkeys {
             return Err(ValidationError::InconsistentMkeys);
         }
     }
@@ -311,8 +440,12 @@ fn class_matches(
 }
 
 /// Check if a reference measurement matches any evidence measurement.
+///
+/// Matching is per §9.4.6: compares `mkey`, `digests` (§9.4.6.1.3),
+/// and `svn` (§9.4.6.1.2) when present in the reference.
 fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) -> bool {
     for ev_meas in evidence {
+        // Match mkey if specified in reference
         if let Some(ref ref_mkey) = reference.mkey {
             match &ev_meas.mkey {
                 Some(ev_mkey) if ev_mkey == ref_mkey => {}
@@ -320,13 +453,29 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
             }
         }
 
+        // Match digests if present in reference (§9.4.6.1.3)
         if let Some(ref ref_digests) = reference.mval.digests {
             if let Some(ref ev_digests) = ev_meas.mval.digests {
-                if digests_match(ref_digests, ev_digests) {
-                    return true;
+                if !digests_match(ref_digests, ev_digests) {
+                    continue;
                 }
+            } else {
+                continue; // reference requires digests but evidence lacks them
             }
-            continue;
+        }
+
+        // Match SVN if present in reference (§9.4.6.1.2)
+        if let Some(ref ref_svn) = reference.mval.svn {
+            if let Some(ref ev_svn) = ev_meas.mval.svn {
+                let ev_val = match ev_svn {
+                    SvnChoice::ExactValue(n) | SvnChoice::MinValue(n) => *n,
+                };
+                if !svn_matches(ref_svn, ev_val) {
+                    continue;
+                }
+            } else {
+                continue; // reference requires svn but evidence lacks it
+            }
         }
 
         return true;

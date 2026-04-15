@@ -6,12 +6,13 @@
 //! All triple record types are CBOR arrays (not maps), so they use standard
 //! serde tuple serialization.
 
-use corim_derive::{CborDeserialize, CborSerialize};
+use corim_macros::{CborDeserialize, CborSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::common::{CryptoKey, MeasuredElement, TagIdChoice};
 use super::environment::EnvironmentMap;
 use super::measurement::MeasurementMap;
+use crate::Validate;
 
 // ---------------------------------------------------------------------------
 // triples-map
@@ -66,9 +67,13 @@ impl ReferenceTriple {
         Self(environment, measurements)
     }
     /// Get the target environment.
-    pub fn environment(&self) -> &EnvironmentMap { &self.0 }
+    pub fn environment(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the reference measurements.
-    pub fn measurements(&self) -> &[MeasurementMap] { &self.1 }
+    pub fn measurements(&self) -> &[MeasurementMap] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +90,13 @@ impl EndorsedTriple {
         Self(condition, endorsement)
     }
     /// Get the condition environment.
-    pub fn condition(&self) -> &EnvironmentMap { &self.0 }
+    pub fn condition(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the endorsement measurements.
-    pub fn endorsement(&self) -> &[MeasurementMap] { &self.1 }
+    pub fn endorsement(&self) -> &[MeasurementMap] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,8 +135,7 @@ pub struct KeyTripleConditions {
 pub struct IdentityTriple(
     pub EnvironmentMap,
     pub Vec<CryptoKey>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub Option<KeyTripleConditions>,
+    #[serde(skip_serializing_if = "Option::is_none", default)] pub Option<KeyTripleConditions>,
 );
 
 impl IdentityTriple {
@@ -140,11 +148,17 @@ impl IdentityTriple {
         Self(environment, keys, conditions)
     }
     /// Get the environment.
-    pub fn environment(&self) -> &EnvironmentMap { &self.0 }
+    pub fn environment(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the key list.
-    pub fn keys(&self) -> &[CryptoKey] { &self.1 }
+    pub fn keys(&self) -> &[CryptoKey] {
+        &self.1
+    }
     /// Get optional conditions.
-    pub fn conditions(&self) -> Option<&KeyTripleConditions> { self.2.as_ref() }
+    pub fn conditions(&self) -> Option<&KeyTripleConditions> {
+        self.2.as_ref()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,8 +172,7 @@ impl IdentityTriple {
 pub struct AttestKeyTriple(
     pub EnvironmentMap,
     pub Vec<CryptoKey>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub Option<KeyTripleConditions>,
+    #[serde(skip_serializing_if = "Option::is_none", default)] pub Option<KeyTripleConditions>,
 );
 
 impl AttestKeyTriple {
@@ -172,11 +185,17 @@ impl AttestKeyTriple {
         Self(environment, keys, conditions)
     }
     /// Get the environment.
-    pub fn environment(&self) -> &EnvironmentMap { &self.0 }
+    pub fn environment(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the key list.
-    pub fn keys(&self) -> &[CryptoKey] { &self.1 }
+    pub fn keys(&self) -> &[CryptoKey] {
+        &self.1
+    }
     /// Get optional conditions.
-    pub fn conditions(&self) -> Option<&KeyTripleConditions> { self.2.as_ref() }
+    pub fn conditions(&self) -> Option<&KeyTripleConditions> {
+        self.2.as_ref()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -195,9 +214,13 @@ impl DomainDependencyTriple {
         Self(domain_id, trustees)
     }
     /// Get the domain identifier.
-    pub fn domain_id(&self) -> &EnvironmentMap { &self.0 }
+    pub fn domain_id(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the trustee domains.
-    pub fn trustees(&self) -> &[EnvironmentMap] { &self.1 }
+    pub fn trustees(&self) -> &[EnvironmentMap] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,9 +239,13 @@ impl DomainMembershipTriple {
         Self(domain_id, members)
     }
     /// Get the domain identifier.
-    pub fn domain_id(&self) -> &EnvironmentMap { &self.0 }
+    pub fn domain_id(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the member environments.
-    pub fn members(&self) -> &[EnvironmentMap] { &self.1 }
+    pub fn members(&self) -> &[EnvironmentMap] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -237,9 +264,13 @@ impl CoswidTriple {
         Self(environment, tag_ids)
     }
     /// Get the environment.
-    pub fn environment(&self) -> &EnvironmentMap { &self.0 }
+    pub fn environment(&self) -> &EnvironmentMap {
+        &self.0
+    }
     /// Get the CoSWID tag identifiers.
-    pub fn tag_ids(&self) -> &[TagIdChoice] { &self.1 }
+    pub fn tag_ids(&self) -> &[TagIdChoice] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +279,7 @@ impl CoswidTriple {
 
 /// Condition block for conditional-endorsement-series triples.
 ///
-/// CDDL:
+/// CDDL (this is a CBOR **array**, not a map):
 /// ```text
 /// condition: [
 ///   environment: environment-map,
@@ -256,15 +287,59 @@ impl CoswidTriple {
 ///   ? authorized-by: [+ $crypto-key-type-choice],
 /// ]
 /// ```
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CesCondition {
     /// The target environment.
     pub environment: EnvironmentMap,
     /// Measurement conditions (may be empty).
     pub claims_list: Vec<MeasurementMap>,
     /// Optional authority condition.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub authorized_by: Option<Vec<CryptoKey>>,
+}
+
+// Custom Serialize/Deserialize for CesCondition — it is a CBOR array [env, claims, ?auth]
+impl Serialize for CesCondition {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let len = if self.authorized_by.is_some() { 3 } else { 2 };
+        let mut seq = serializer.serialize_seq(Some(len))?;
+        seq.serialize_element(&self.environment)?;
+        seq.serialize_element(&self.claims_list)?;
+        if let Some(ref auth) = self.authorized_by {
+            seq.serialize_element(auth)?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for CesCondition {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct CesCondVisitor;
+        impl<'de> serde::de::Visitor<'de> for CesCondVisitor {
+            type Value = CesCondition;
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("a CBOR array [environment, claims-list, ?authorized-by]")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let environment: EnvironmentMap = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let claims_list: Vec<MeasurementMap> = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let authorized_by: Option<Vec<CryptoKey>> = seq.next_element()?;
+                Ok(CesCondition {
+                    environment,
+                    claims_list,
+                    authorized_by,
+                })
+            }
+        }
+        deserializer.deserialize_seq(CesCondVisitor)
+    }
 }
 
 /// `conditional-endorsement-series-triple-record`.
@@ -277,9 +352,13 @@ impl ConditionalEndorsementSeriesTriple {
         Self(condition, series)
     }
     /// Get the condition.
-    pub fn condition(&self) -> &CesCondition { &self.0 }
+    pub fn condition(&self) -> &CesCondition {
+        &self.0
+    }
     /// Get the series records.
-    pub fn series(&self) -> &[ConditionalSeriesRecord] { &self.1 }
+    pub fn series(&self) -> &[ConditionalSeriesRecord] {
+        &self.1
+    }
 }
 
 /// `conditional-series-record = [selection: [+ measurement-map], addition: [+ measurement-map]]`.
@@ -292,9 +371,13 @@ impl ConditionalSeriesRecord {
         Self(selection, addition)
     }
     /// Get the selection criteria.
-    pub fn selection(&self) -> &[MeasurementMap] { &self.0 }
+    pub fn selection(&self) -> &[MeasurementMap] {
+        &self.0
+    }
     /// Get the addition values.
-    pub fn addition(&self) -> &[MeasurementMap] { &self.1 }
+    pub fn addition(&self) -> &[MeasurementMap] {
+        &self.1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -319,3 +402,213 @@ pub struct ConditionalEndorsementTriple(
     pub Vec<StatefulEnvironmentRecord>,
     pub Vec<EndorsedTriple>,
 );
+
+// ---------------------------------------------------------------------------
+// Validate implementations
+// ---------------------------------------------------------------------------
+
+impl Validate for TriplesMap {
+    fn valid(&self) -> Result<(), String> {
+        fn non_empty<T>(v: &Option<Vec<T>>) -> bool {
+            v.as_ref().is_some_and(|v| !v.is_empty())
+        }
+
+        let has_triples = non_empty(&self.reference_triples)
+            || non_empty(&self.endorsed_triples)
+            || non_empty(&self.identity_triples)
+            || non_empty(&self.attest_key_triples)
+            || non_empty(&self.dependency_triples)
+            || non_empty(&self.membership_triples)
+            || non_empty(&self.coswid_triples)
+            || non_empty(&self.conditional_endorsement_series)
+            || non_empty(&self.conditional_endorsement);
+
+        if !has_triples {
+            return Err("triples struct must not be empty".into());
+        }
+
+        if let Some(ref triples) = self.reference_triples {
+            for (i, t) in triples.iter().enumerate() {
+                t.valid()
+                    .map_err(|e| format!("reference value at index {i}: {e}"))?;
+            }
+        }
+        if let Some(ref triples) = self.endorsed_triples {
+            for (i, t) in triples.iter().enumerate() {
+                t.valid()
+                    .map_err(|e| format!("endorsed value at index {i}: {e}"))?;
+            }
+        }
+        if let Some(ref triples) = self.identity_triples {
+            for (i, t) in triples.iter().enumerate() {
+                t.valid()
+                    .map_err(|e| format!("identity triple at index {i}: {e}"))?;
+            }
+        }
+        if let Some(ref triples) = self.attest_key_triples {
+            for (i, t) in triples.iter().enumerate() {
+                t.valid()
+                    .map_err(|e| format!("attest-key triple at index {i}: {e}"))?;
+            }
+        }
+        if let Some(ref triples) = self.dependency_triples {
+            for (i, t) in triples.iter().enumerate() {
+                t.valid()
+                    .map_err(|e| format!("dependency triple at index {i}: {e}"))?;
+            }
+        }
+        if let Some(ref triples) = self.membership_triples {
+            for (i, t) in triples.iter().enumerate() {
+                t.valid()
+                    .map_err(|e| format!("membership triple at index {i}: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ReferenceTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .valid()
+            .map_err(|e| format!("environment validation failed: {e}"))?;
+        if self.1.is_empty() {
+            return Err("measurements validation failed: no measurement entries".into());
+        }
+        for (i, m) in self.1.iter().enumerate() {
+            m.valid()
+                .map_err(|e| format!("measurement at index {i}: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for EndorsedTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .valid()
+            .map_err(|e| format!("environment validation failed: {e}"))?;
+        if self.1.is_empty() {
+            return Err("measurements validation failed: no measurement entries".into());
+        }
+        for (i, m) in self.1.iter().enumerate() {
+            m.valid()
+                .map_err(|e| format!("measurement at index {i}: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for IdentityTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .valid()
+            .map_err(|e| format!("environment validation failed: {e}"))?;
+        if self.1.is_empty() {
+            return Err("verification keys validation failed: no keys".into());
+        }
+        Ok(())
+    }
+}
+
+impl Validate for AttestKeyTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .valid()
+            .map_err(|e| format!("environment validation failed: {e}"))?;
+        if self.1.is_empty() {
+            return Err("verification keys validation failed: no keys".into());
+        }
+        Ok(())
+    }
+}
+
+impl Validate for DomainDependencyTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0.valid().map_err(|e| format!("domain-id: {e}"))?;
+        if self.1.is_empty() {
+            return Err("at least one trustee required".into());
+        }
+        for (i, t) in self.1.iter().enumerate() {
+            t.valid()
+                .map_err(|e| format!("trustee at index {i}: {e}"))?;
+        }
+        // Check domain-id does not appear in trustees (§5.1.11.2 constraint)
+        for trustee in &self.1 {
+            if self.0 == *trustee {
+                return Err("domain-id must not appear in trustees".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Validate for DomainMembershipTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0.valid().map_err(|e| format!("domain-id: {e}"))?;
+        if self.1.is_empty() {
+            return Err("at least one member required".into());
+        }
+        for (i, m) in self.1.iter().enumerate() {
+            m.valid().map_err(|e| format!("member at index {i}: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for CoswidTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .valid()
+            .map_err(|e| format!("environment validation failed: {e}"))?;
+        if self.1.is_empty() {
+            return Err("at least one CoSWID tag-id required".into());
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ConditionalEndorsementSeriesTriple {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .environment
+            .valid()
+            .map_err(|e| format!("condition environment: {e}"))?;
+        if self.1.is_empty() {
+            return Err("no measurement entries in series".into());
+        }
+        Ok(())
+    }
+}
+
+impl Validate for StatefulEnvironmentRecord {
+    fn valid(&self) -> Result<(), String> {
+        self.0
+            .valid()
+            .map_err(|e| format!("environment validation failed: {e}"))?;
+        if self.1.is_empty() {
+            return Err("measurements must not be empty".into());
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ConditionalEndorsementTriple {
+    fn valid(&self) -> Result<(), String> {
+        if self.0.is_empty() {
+            return Err("conditions must not be empty".into());
+        }
+        for (i, c) in self.0.iter().enumerate() {
+            c.valid()
+                .map_err(|e| format!("condition at index {i}: {e}"))?;
+        }
+        if self.1.is_empty() {
+            return Err("endorsements must not be empty".into());
+        }
+        for (i, e) in self.1.iter().enumerate() {
+            e.valid()
+                .map_err(|e| format!("endorsement at index {i}: {e}"))?;
+        }
+        Ok(())
+    }
+}

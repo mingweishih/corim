@@ -37,10 +37,7 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .filter_map(|f| {
             let ident = f.ident.as_ref()?;
             // Check if this field is in our parsed cbor fields
-            fields
-                .iter()
-                .find(|cf| cf.ident == *ident)
-                .map(|_| &f.ty)
+            fields.iter().find(|cf| cf.ident == *ident).map(|_| &f.ty)
         })
         .collect();
 
@@ -188,7 +185,7 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                 where
                     __D: serde::Deserializer<'de>,
                 {
-                    let tagged: crate::cbor::value::Tagged<__CborInner> =
+                    let tagged: crate::cbor::value::Tagged<__CborDeInner> =
                         crate::cbor::value::Tagged::deserialize(deserializer)?;
                     if tagged.tag != #tag {
                         return Err(serde::de::Error::custom(
@@ -199,10 +196,11 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            // Helper for inner map deserialization
-            struct __CborInner(#name);
+            // Helper for inner map deserialization.
+            // Uses a name unlikely to collide in user code.
+            struct __CborDeInner(#name);
 
-            impl<'de> serde::Deserialize<'de> for __CborInner {
+            impl<'de> serde::Deserialize<'de> for __CborDeInner {
                 #deserialize_body
             }
         }

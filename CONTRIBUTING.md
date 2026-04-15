@@ -16,7 +16,7 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ### Reporting Issues
 
-Please search the [existing issues](https://github.com/microsoft/corim/issues) before filing new
+Please search the [existing issues](https://github.com/mingweishih/corim/issues) before filing new
 issues to avoid duplicates. For new issues, file your bug or feature request as a new Issue.
 
 When filing a bug report, please include:
@@ -41,17 +41,27 @@ When filing a bug report, please include:
 
 ```bash
 # Clone and build
-git clone https://github.com/microsoft/corim.git
+git clone https://github.com/mingweishih/corim.git
 cd corim
 cargo build
+
+# Install pre-commit hook (runs fmt + clippy before each commit)
+cp scripts/pre-commit.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 # Run tests
 cargo test --all
 
-# Run lints
+# Run lints (ALWAYS do this before commit/push — CI will reject failures)
 cargo fmt --all -- --check
-cargo clippy --all -- -D warnings
+cargo clippy --workspace -- -D warnings
 ```
+
+> **⚠️ Before every commit and push**, run:
+> ```bash
+> cargo fmt --all && cargo clippy --workspace -- -D warnings && cargo test --workspace
+> ```
+> The CI pipeline rejects any formatting diffs or clippy warnings.
+> The pre-commit hook automates the fmt + clippy checks.
 
 ### Coding Guidelines
 

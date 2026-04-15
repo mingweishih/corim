@@ -3,20 +3,23 @@
 
 //! Top-level `corim-map` and related types.
 
-use corim_derive::{CborDeserialize, CborSerialize};
+use corim_macros::{CborDeserialize, CborSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::cbor;
-use crate::cbor::value::{self, Value};
 use super::common::{EntityMap, TagIdentity, ValidityMap};
 use super::measurement::Digest;
+use super::tags::*;
+use crate::cbor;
+use crate::cbor::value::{self, Value};
+use crate::Validate;
 
 // ---------------------------------------------------------------------------
 // corim-id
 // ---------------------------------------------------------------------------
 
 /// `$corim-id-type-choice` — text or UUID.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CorimId {
     /// A text CoRIM identifier.
     Text(String),
@@ -28,7 +31,7 @@ impl Serialize for CorimId {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
             CorimId::Text(t) => s.serialize_str(t),
-            CorimId::Uuid(u) => value::serialize_tagged_bytes(37, u, s),
+            CorimId::Uuid(u) => value::serialize_tagged_bytes(TAG_UUID, u, s),
         }
     }
 }
@@ -38,12 +41,54 @@ impl<'de> Deserialize<'de> for CorimId {
         let val = Value::deserialize(d)?;
         match val {
             Value::Text(t) => Ok(CorimId::Text(t)),
-            Value::Tag(37, inner) => {
-                let b = inner.into_bytes().ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
-                Ok(CorimId::Uuid(b.try_into().map_err(|_| serde::de::Error::custom("UUID must be 16 bytes"))?))
+            Value::Tag(TAG_UUID, inner) => {
+                let b = inner
+                    .into_bytes()
+                    .ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
+                Ok(CorimId::Uuid(b.try_into().map_err(|_| {
+                    serde::de::Error::custom("UUID must be 16 bytes")
+                })?))
             }
             _ => Err(serde::de::Error::custom("expected text or tagged UUID")),
         }
+    }
+}
+
+impl core::fmt::Display for CorimId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CorimId::Text(t) => write!(f, "{}", t),
+            CorimId::Uuid(u) => {
+                let hex = |s: &[u8]| -> String { s.iter().map(|b| format!("{:02x}", b)).collect() };
+                write!(
+                    f,
+                    "{}-{}-{}-{}-{}",
+                    hex(&u[0..4]),
+                    hex(&u[4..6]),
+                    hex(&u[6..8]),
+                    hex(&u[8..10]),
+                    hex(&u[10..16])
+                )
+            }
+        }
+    }
+}
+
+impl From<String> for CorimId {
+    fn from(s: String) -> Self {
+        Self::Text(s)
+    }
+}
+
+impl From<&str> for CorimId {
+    fn from(s: &str) -> Self {
+        Self::Text(s.to_owned())
+    }
+}
+
+impl From<[u8; 16]> for CorimId {
+    fn from(u: [u8; 16]) -> Self {
+        Self::Uuid(u)
     }
 }
 
@@ -52,7 +97,8 @@ impl<'de> Deserialize<'de> for CorimId {
 // ---------------------------------------------------------------------------
 
 /// `$profile-type-choice` — URI or OID.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProfileChoice {
     /// A URI profile identifier.
     Uri(String),
@@ -64,7 +110,7 @@ impl Serialize for ProfileChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
             ProfileChoice::Uri(u) => s.serialize_str(u),
-            ProfileChoice::Oid(b) => value::serialize_tagged_bytes(111, b, s),
+            ProfileChoice::Oid(b) => value::serialize_tagged_bytes(TAG_OID, b, s),
         }
     }
 }
@@ -74,10 +120,27 @@ impl<'de> Deserialize<'de> for ProfileChoice {
         let val = Value::deserialize(d)?;
         match val {
             Value::Text(t) => Ok(ProfileChoice::Uri(t)),
-            Value::Tag(111, inner) => Ok(ProfileChoice::Oid(
-                inner.into_bytes().ok_or_else(|| serde::de::Error::custom("tag 111 must wrap bytes"))?,
-            )),
+            Value::Tag(TAG_OID, inner) => {
+                Ok(ProfileChoice::Oid(inner.into_bytes().ok_or_else(|| {
+                    serde::de::Error::custom("tag 111 must wrap bytes")
+                })?))
+            }
             _ => Err(serde::de::Error::custom("expected text URI or tagged OID")),
+        }
+    }
+}
+
+impl core::fmt::Display for ProfileChoice {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ProfileChoice::Uri(u) => write!(f, "{}", u),
+            ProfileChoice::Oid(b) => {
+                write!(f, "oid:")?;
+                for byte in b {
+                    write!(f, "{:02x}", byte)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -90,7 +153,8 @@ impl<'de> Deserialize<'de> for ProfileChoice {
 ///
 /// Only CoMID (tag 506) is fully modeled. CoSWID (505) and CoTL (508)
 /// are stored as opaque bytes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConciseTagChoice {
     /// CoMID tag (CBOR tag 506 wrapping bytes).
     Comid(Vec<u8>),
@@ -105,9 +169,9 @@ pub enum ConciseTagChoice {
 impl Serialize for ConciseTagChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            ConciseTagChoice::Comid(bytes) => value::serialize_tagged_bytes(506, bytes, s),
-            ConciseTagChoice::Coswid(bytes) => value::serialize_tagged_bytes(505, bytes, s),
-            ConciseTagChoice::Cotl(bytes) => value::serialize_tagged_bytes(508, bytes, s),
+            ConciseTagChoice::Comid(bytes) => value::serialize_tagged_bytes(TAG_COMID, bytes, s),
+            ConciseTagChoice::Coswid(bytes) => value::serialize_tagged_bytes(TAG_COSWID, bytes, s),
+            ConciseTagChoice::Cotl(bytes) => value::serialize_tagged_bytes(TAG_COTL, bytes, s),
             ConciseTagChoice::Unknown(tag, bytes) => {
                 let val = Value::Tag(*tag, Box::new(Value::Bytes(bytes.clone())));
                 val.serialize(s)
@@ -120,15 +184,15 @@ impl<'de> Deserialize<'de> for ConciseTagChoice {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Tag(506, inner) => match *inner {
+            Value::Tag(TAG_COMID, inner) => match *inner {
                 Value::Bytes(b) => Ok(ConciseTagChoice::Comid(b)),
                 _ => Err(serde::de::Error::custom("tag 506 must wrap bytes")),
             },
-            Value::Tag(505, inner) => match *inner {
+            Value::Tag(TAG_COSWID, inner) => match *inner {
                 Value::Bytes(b) => Ok(ConciseTagChoice::Coswid(b)),
                 _ => Err(serde::de::Error::custom("tag 505 must wrap bytes")),
             },
-            Value::Tag(508, inner) => match *inner {
+            Value::Tag(TAG_COTL, inner) => match *inner {
                 Value::Bytes(b) => Ok(ConciseTagChoice::Cotl(b)),
                 _ => Err(serde::de::Error::custom("tag 508 must wrap bytes")),
             },
@@ -165,7 +229,8 @@ pub struct CorimLocator {
 }
 
 /// Href can be a single URI string or an array of URI strings.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CorimLocatorHref {
     /// Single URI.
     Single(String),
@@ -192,7 +257,9 @@ impl<'de> Deserialize<'de> for CorimLocatorHref {
                 for v in arr {
                     match v {
                         Value::Text(t) => uris.push(t),
-                        _ => return Err(serde::de::Error::custom("href array must contain strings")),
+                        _ => {
+                            return Err(serde::de::Error::custom("href array must contain strings"))
+                        }
                     }
                 }
                 Ok(CorimLocatorHref::Multiple(uris))
@@ -203,7 +270,8 @@ impl<'de> Deserialize<'de> for CorimLocatorHref {
 }
 
 /// Thumbprint can be a single digest or array of digests.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CorimLocatorThumbprint {
     /// Single digest.
     Single(Digest),
@@ -229,36 +297,56 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                 match &arr[0] {
                     Value::Array(_) => {
                         // Array of digests: [[alg, val], ...]
-                        let Value::Array(outer) = val else { unreachable!() };
+                        let Value::Array(outer) = val else {
+                            unreachable!()
+                        };
                         let mut ds = Vec::new();
                         for item in outer {
                             match item {
                                 Value::Array(pair) if pair.len() == 2 => {
                                     let mut it = pair.into_iter();
                                     let alg = match it.next().unwrap() {
-                                        Value::Integer(n) => n as i64,
-                                        _ => return Err(serde::de::Error::custom("digest alg must be int")),
+                                        Value::Integer(n) => i64::try_from(n).map_err(|_| {
+                                            serde::de::Error::custom("digest alg out of i64 range")
+                                        })?,
+                                        _ => {
+                                            return Err(serde::de::Error::custom(
+                                                "digest alg must be int",
+                                            ))
+                                        }
                                     };
                                     let v = match it.next().unwrap() {
                                         Value::Bytes(b) => b,
-                                        _ => return Err(serde::de::Error::custom("digest val must be bytes")),
+                                        _ => {
+                                            return Err(serde::de::Error::custom(
+                                                "digest val must be bytes",
+                                            ))
+                                        }
                                     };
                                     ds.push(Digest::new(alg, v));
                                 }
-                                _ => return Err(serde::de::Error::custom("digest must be [alg, val]")),
+                                _ => {
+                                    return Err(serde::de::Error::custom(
+                                        "digest must be [alg, val]",
+                                    ))
+                                }
                             }
                         }
                         Ok(CorimLocatorThumbprint::Multiple(ds))
                     }
                     _ => {
                         // Single digest [alg, val]
-                        let Value::Array(pair) = val else { unreachable!() };
+                        let Value::Array(pair) = val else {
+                            unreachable!()
+                        };
                         if pair.len() != 2 {
                             return Err(serde::de::Error::custom("digest must be [alg, val]"));
                         }
                         let mut it = pair.into_iter();
                         let alg = match it.next().unwrap() {
-                            Value::Integer(n) => n as i64,
+                            Value::Integer(n) => i64::try_from(n).map_err(|_| {
+                                serde::de::Error::custom("digest alg out of i64 range")
+                            })?,
                             _ => return Err(serde::de::Error::custom("digest alg must be int")),
                         };
                         let v = match it.next().unwrap() {
@@ -347,4 +435,44 @@ pub struct CorimMap {
     /// `entities` (key 5): optional entity list.
     #[cbor(key = 5, optional)]
     pub entities: Option<Vec<EntityMap>>,
+}
+
+impl Validate for ConciseTlTag {
+    fn valid(&self) -> Result<(), String> {
+        // tags-list must be non-empty (CDDL: [+ tag-identity-map])
+        if self.tags_list.is_empty() {
+            return Err("tags-list must not be empty".into());
+        }
+        // Validate validity window consistency
+        if let Some(nb) = self.tl_validity.not_before {
+            if nb.epoch_secs() > self.tl_validity.not_after.epoch_secs() {
+                return Err("not-before must be <= not-after".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Validate for CorimMap {
+    fn valid(&self) -> Result<(), String> {
+        // tags must be non-empty
+        if self.tags.is_empty() {
+            return Err("tags list must not be empty".into());
+        }
+        // Validate validity window consistency
+        if let Some(ref validity) = self.rim_validity {
+            if let Some(nb) = validity.not_before {
+                if nb.epoch_secs() > validity.not_after.epoch_secs() {
+                    return Err("rim-validity: not-before must be <= not-after".into());
+                }
+            }
+        }
+        // Validate entities if present
+        if let Some(ref entities) = self.entities {
+            if entities.is_empty() {
+                return Err("entities list must not be empty".into());
+            }
+        }
+        Ok(())
+    }
 }

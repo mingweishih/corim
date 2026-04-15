@@ -3,19 +3,20 @@
 
 //! CBOR encoding/decoding abstraction layer.
 //!
-//! Defines a [`CborCodec`] trait with deterministic encoding, plus a
-//! backend-agnostic [`value::Value`] enum and [`value::Tagged`] wrapper.
-//! The default implementation uses ciborium (behind the `cbor-ciborium`
-//! feature gate). To swap backends, add a new feature and implement
-//! `Serialize`/`Deserialize` for `Value` and `Tagged<T>`.
+//! Provides a [`CborCodec`] trait for deterministic CBOR encoding/decoding,
+//! plus a backend-agnostic [`value::Value`] enum and [`value::Tagged`] wrapper.
 //!
-//! At least one CBOR backend feature must be enabled.
+//! The default (and currently only) backend is the in-house minimal CBOR
+//! implementation in [`minimal`], which guarantees RFC 8949 §4.2.1
+//! deterministic encoding with zero external dependencies.
+//!
+//! The [`CborCodec`] trait is designed so that alternative backends (e.g.,
+//! ciborium) can be added behind feature gates in the future without
+//! changing any type definitions or public APIs.
 
-#[cfg(not(feature = "cbor-ciborium"))]
-compile_error!("At least one CBOR backend must be enabled. Enable the `cbor-ciborium` feature.");
-
-#[cfg(feature = "cbor-ciborium")]
-mod ciborium_backend;
+pub mod constants;
+pub mod minimal;
+mod minimal_backend;
 
 pub mod value;
 
@@ -27,6 +28,9 @@ use serde::{de::DeserializeOwned, Serialize};
 /// Only deterministic encoding is provided. Map keys are emitted in ascending
 /// integer order by the `CborSerialize` derive macro, satisfying RFC 8949
 /// §4.2.1 (CBOR Core Deterministic Encoding).
+///
+/// This trait exists so that alternative CBOR backends can be plugged in
+/// behind feature gates without changing the rest of the crate.
 pub trait CborCodec {
     /// Encode a value as deterministic CBOR bytes.
     fn encode_deterministic<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError>;
@@ -35,18 +39,15 @@ pub trait CborCodec {
     fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError>;
 }
 
-/// The default codec selected by feature flags.
-#[cfg(feature = "cbor-ciborium")]
-pub type DefaultCodec = ciborium_backend::CiboriumCodec;
+/// The active CBOR codec.
+pub type DefaultCodec = minimal_backend::MinimalCodec;
 
 /// Convenience: encode using the default codec.
-#[cfg(feature = "cbor-ciborium")]
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError> {
     DefaultCodec::encode_deterministic(value)
 }
 
 /// Convenience: decode using the default codec.
-#[cfg(feature = "cbor-ciborium")]
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
     DefaultCodec::decode(bytes)
 }
