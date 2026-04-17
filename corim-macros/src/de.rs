@@ -107,26 +107,16 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         })
         .collect();
 
-    // Non-empty check after constructing
+    // Non-empty check after constructing.
+    // A map satisfies non-empty if ANY entry was present (including unknown
+    // extension keys that were skipped). This correctly handles maps that
+    // contain only extension keys (e.g., key 10001 for profile-specific data).
     let non_empty_check = if struct_attrs.non_empty {
-        let checks: Vec<_> = fields
-            .iter()
-            .filter(|f| f.attrs.optional)
-            .map(|f| {
-                let ident = &f.ident;
-                quote! { result.#ident.is_none() }
-            })
-            .collect();
-
-        if checks.is_empty() {
-            quote! {}
-        } else {
-            quote! {
-                if #(#checks)&&* {
-                    return Err(serde::de::Error::custom(
-                        concat!("non-empty constraint violated: all optional fields are None in ", stringify!(#name))
-                    ));
-                }
+        quote! {
+            if !__had_any_entry {
+                return Err(serde::de::Error::custom(
+                    concat!("non-empty constraint violated: map is empty in ", stringify!(#name))
+                ));
             }
         }
     } else {
@@ -152,8 +142,10 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                     __A: serde::de::MapAccess<'de>,
                 {
                     #(#temp_decls)*
+                    let mut __had_any_entry = false;
 
                     while let Some(key) = map.next_key::<i64>()? {
+                        __had_any_entry = true;
                         match key {
                             #(#match_arms)*
                             _ => {
